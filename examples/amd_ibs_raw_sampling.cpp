@@ -63,7 +63,7 @@ main()
 
   /// Print the first samples.
   const auto count_show_samples = std::min<std::size_t>(samples.size(), 40U);
-  std::cout << "\nRecorded " << samples.size() << " samples. " << samples.size() << std::endl;
+  std::cout << "\nRecorded " << samples.size() << " samples. " << std::endl;
   std::cout << "Here are the first " << count_show_samples << " recorded samples:\n" << std::endl;
   for (auto index = 0U; index < count_show_samples; ++index) {
     const auto& sample = samples[index];

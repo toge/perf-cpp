@@ -523,7 +523,7 @@ public:
 
 private:
   /**
-   * Represents a counter that is configured to somple;
+   * Represents a counter that is configured to sample;
    * including the counter group (plus counter names) and the buffer
    * user-level buffer that is used by the perf subsystem to store the samples.
    */
@@ -565,7 +565,7 @@ private:
   class UserLevelBufferEntry
   {
   public:
-    UserLevelBufferEntry(perf_event_header* header) noexcept
+    explicit UserLevelBufferEntry(perf_event_header* header) noexcept
       : _head(std::uintptr_t(header + 1U))
       , _misc(header->misc)
       , _type(header->type)
@@ -668,31 +668,6 @@ private:
   };
 
   /**
-   * Read format for sampled counter values.
-   */
-  struct read_format
-  {
-    /// Value and ID delivered by perf.
-    struct value
-    {
-      std::uint64_t value;
-      std::uint64_t id;
-    };
-
-    /// Number of counters in the following array.
-    std::uint64_t count_members;
-
-    /// Time the event was enabled.
-    std::uint64_t time_enabled;
-
-    /// Time the event was running.
-    std::uint64_t time_running;
-
-    /// Values of the members.
-    std::array<value, Group::MAX_MEMBERS> values;
-  };
-
-  /**
    * Reads the sample_id struct from the data located at sample_ptr into the provided sample.
    *
    * @param sample Sample to read the data into.
@@ -734,7 +709,7 @@ private:
    *
    * @return Sample containing the cgroup.
    */
-  [[nodiscard]] perf::Sample read_cgroup_event(UserLevelBufferEntry entry) const;
+  [[nodiscard]] static perf::Sample read_cgroup_event(UserLevelBufferEntry entry);
 
   /**
    * Translates the current entry from the user-level buffer into a throttle or unthrottle sample.

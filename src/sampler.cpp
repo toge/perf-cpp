@@ -1,12 +1,8 @@
 #include <algorithm>
-#include <asm/unistd.h>
-#include <cstring>
-#include <iostream>
 #include <perfcpp/sampler.h>
 #include <stdexcept>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <unistd.h>
 #include <utility>
 
 perf::Sampler::Sampler(const perf::CounterDefinition& counter_list,
@@ -218,6 +214,8 @@ perf::Sampler::open()
     /// Detect, if the leader is an auxiliary (specifically for Sapphire Rapids).
     const auto is_leader_auxiliary_counter = sample_counter.group().member(0U).is_auxiliary();
 
+    auto group_leader_file_descriptor = -1LL;
+
     for (auto counter_index = 0U; counter_index < sample_counter.group().size(); ++counter_index) {
       auto& counter = sample_counter.group().member(counter_index);
 
@@ -228,104 +226,39 @@ perf::Sampler::open()
       /// Only the second counter is the "real" sampling counter.
       const auto is_secret_leader = is_leader_auxiliary_counter && counter_index == 1U;
 
-      auto& perf_event = counter.event_attribute();
-      std::memset(&perf_event, 0, sizeof(perf_event_attr));
-      perf_event.type = counter.type();
-      perf_event.size = sizeof(perf_event_attr);
-      perf_event.config = counter.event_id();
-      perf_event.config1 = counter.event_id_extension()[0U];
-      perf_event.config2 = counter.event_id_extension()[1U];
-      perf_event.disabled = is_leader;
-
-      perf_event.inherit = static_cast<std::int32_t>(this->_config.is_include_child_threads());
-      perf_event.exclude_kernel = static_cast<std::int32_t>(!this->_config.is_include_kernel());
-      perf_event.exclude_user = static_cast<std::int32_t>(!this->_config.is_include_user());
-      perf_event.exclude_hv = static_cast<std::int32_t>(!this->_config.is_include_hypervisor());
-      perf_event.exclude_idle = static_cast<std::int32_t>(!this->_config.is_include_idle());
-      perf_event.exclude_guest = static_cast<std::int32_t>(!this->_config.is_include_guest());
-
-      if (is_leader || is_secret_leader) {
-        perf_event.sample_type = this->_values.get();
-        perf_event.sample_id_all = 1U;
-
-        /// Set period of frequency.
-        perf_event.freq = static_cast<std::uint64_t>(counter.is_frequency());
-        perf_event.sample_freq = counter.period_or_frequency();
-
-        if (this->_values.is_set(PERF_SAMPLE_BRANCH_STACK)) {
-          perf_event.branch_sample_type = this->_values.branch_mask();
-        }
-
-#ifndef PERFCPP_NO_SAMPLE_MAX_STACK
-        if (this->_values.is_set(PERF_SAMPLE_CALLCHAIN)) {
-          perf_event.sample_max_stack = this->_values.max_call_stack();
-        }
-#endif
-
-        if (this->_values.is_set(PERF_SAMPLE_REGS_USER)) {
-          perf_event.sample_regs_user = this->_values.user_registers().mask();
-        }
-
-        if (this->_values.is_set(PERF_SAMPLE_REGS_INTR)) {
-          perf_event.sample_regs_intr = this->_values.kernel_registers().mask();
-        }
-
-#ifndef PERFCPP_NO_RECORD_SWITCH
-        perf_event.context_switch = static_cast<std::uint8_t>(this->_values._is_include_context_switch);
-#endif
-
 #ifndef PERFCPP_NO_RECORD_CGROUP
-        perf_event.cgroup = this->_values.is_set(PERF_SAMPLE_CGROUP) ? 1U : 0U;
+      const auto is_include_cgroup = this->_values.is_set(PERF_SAMPLE_CGROUP);
+#else
+      const auto is_include_cgroup = false;
 #endif
-      }
 
-      if (this->_values.is_set(PERF_SAMPLE_READ)) {
-        perf_event.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
+      counter.open(
+        this->_config.is_debug(),
+        is_leader,
+        is_secret_leader,
+        group_leader_file_descriptor,
+        this->_config.cpu_id(),
+        this->_config.process_id(),
+        this->_config.is_include_child_threads(),
+        this->_config.is_include_kernel(),
+        this->_config.is_include_user(),
+        this->_config.is_include_hypervisor(),
+        this->_config.is_include_idle(),
+        this->_config.is_include_guest(),
+        this->_values.is_set(PERF_SAMPLE_READ),
+        this->_values.get(),
+        this->_values.is_set(PERF_SAMPLE_BRANCH_STACK) ? std::make_optional(this->_values.branch_mask()) : std::nullopt,
+        this->_values.is_set(PERF_SAMPLE_REGS_USER) ? std::make_optional(this->_values.user_registers().mask())
+                                                    : std::nullopt,
+        this->_values.is_set(PERF_SAMPLE_REGS_INTR) ? std::make_optional(this->_values.kernel_registers().mask())
+                                                    : std::nullopt,
+        this->_values.is_set(PERF_SAMPLE_CALLCHAIN) ? std::make_optional(this->_values.max_call_stack()) : std::nullopt,
+        this->_values._is_include_context_switch,
+        is_include_cgroup);
 
-        if (is_leader) {
-          perf_event.read_format |= PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
-        }
-      }
-
-      const std::int32_t cpu_id =
-        this->_config.cpu_id().has_value() ? std::int32_t{ this->_config.cpu_id().value() } : -1;
-
-      /// Open the counter. Try to decrease the precise_ip if the file syscall was not successful, reporting an invalid
-      /// argument.
-      std::int64_t file_descriptor;
-      for (auto precise_ip = std::int32_t{ counter.precise_ip() }; precise_ip > -1; --precise_ip) {
-        perf_event.precise_ip = std::uint64_t(precise_ip);
-
-        counter.precise_ip(
-          static_cast<std::uint8_t>(precise_ip)); /// Set back to counter in case the counter is debugged and the user
-                                                  /// wants to see the precise_ip that worked.
-
-        file_descriptor = ::syscall(__NR_perf_event_open,
-                                    &perf_event,
-                                    this->_config.process_id(),
-                                    cpu_id,
-                                    sample_counter.group().leader_file_descriptor(),
-                                    0);
-
-        /// If opening the file descriptor was successfully, we can start the counter.
-        /// Otherwise, we will try to decrease the precision and try again.
-        if (file_descriptor > -1 || (errno != EINVAL && errno != EOPNOTSUPP)) {
-          break;
-        }
-      }
-      counter.file_descriptor(file_descriptor);
-
-      /// Print debug output, if requested.
-      if (this->_config.is_debug()) {
-        std::cout << counter.to_string() << std::flush;
-      }
-
-      /// Check if the counter could be opened successfully.
-      if (file_descriptor < 0) {
-        this->_last_error = errno;
-        throw std::runtime_error{ std::string{ "Cannot create file descriptor for sampling counter (error no: " }
-                                    .append(std::to_string(errno))
-                                    .append(").") };
+      /// Set the group leader file descriptor.
+      if (is_leader) {
+        group_leader_file_descriptor = counter.file_descriptor();
       }
     }
 
@@ -333,13 +266,14 @@ perf::Sampler::open()
     /// If the leader is an "auxiliary" counter (like on Sapphire Rapid), use the second counter instead.
     const auto file_descriptor = is_leader_auxiliary_counter && sample_counter.group().size() > 1U
                                    ? sample_counter.group().member(1U).file_descriptor()
-                                   : sample_counter.group().leader_file_descriptor();
+                                   : group_leader_file_descriptor;
     auto* buffer = ::mmap(nullptr,
                           this->_config.buffer_pages() * 4096U,
                           PROT_READ,
                           MAP_SHARED,
                           static_cast<std::int32_t>(file_descriptor),
                           0);
+
     if (buffer == MAP_FAILED) {
       this->_last_error = errno;
       throw std::runtime_error{ "Creating buffer via mmap() failed." };
@@ -361,8 +295,11 @@ perf::Sampler::start()
 
   /// Start the counters.
   for (const auto& sample_counter : this->_sample_counter) {
-    ::ioctl(sample_counter.group().leader_file_descriptor(), PERF_EVENT_IOC_RESET, 0);
-    ::ioctl(sample_counter.group().leader_file_descriptor(), PERF_EVENT_IOC_ENABLE, 0);
+    const auto group_leader_file_descriptor =
+      static_cast<std::int32_t>(sample_counter.group().leader_file_descriptor());
+
+    ::ioctl(group_leader_file_descriptor, PERF_EVENT_IOC_RESET, 0);
+    ::ioctl(group_leader_file_descriptor, PERF_EVENT_IOC_ENABLE, 0);
   }
 
   return true;
@@ -372,7 +309,9 @@ void
 perf::Sampler::stop()
 {
   for (const auto& sample_counter : this->_sample_counter) {
-    ::ioctl(sample_counter.group().leader_file_descriptor(), PERF_EVENT_IOC_DISABLE, 0);
+    const auto group_leader_file_descriptor =
+      static_cast<std::int32_t>(sample_counter.group().leader_file_descriptor());
+    ::ioctl(group_leader_file_descriptor, PERF_EVENT_IOC_DISABLE, 0);
   }
 }
 
@@ -432,7 +371,7 @@ perf::Sampler::result(const bool sort_by_time) const
       } else if (entry.is_context_switch_event()) { /// Read context switch.
         result.push_back(this->read_context_switch_event(entry));
       } else if (entry.is_cgroup_event()) { /// Read cgroup samples.
-        result.push_back(this->read_cgroup_event(entry));
+        result.push_back(Sampler::read_cgroup_event(entry));
       } else if (entry.is_throttle_event() && this->_values._is_include_throttle) { /// Read (un-) throttle samples.
         result.push_back(this->read_throttle_event(entry));
       }
@@ -537,15 +476,15 @@ perf::Sampler::read_sample_event(perf::Sampler::UserLevelBufferEntry entry, cons
 
   if (this->_values.is_set(PERF_SAMPLE_READ)) {
     /// Read the number of counters.
-    const auto count_counter_values = entry.read<typeof(Sampler::read_format::count_members)>();
+    const auto count_counter_values = entry.read<typeof(CounterReadFormat<Group::MAX_MEMBERS>::count_members)>();
 
     /// Time enabled and running for correction.
-    const auto time_enabled = entry.read<typeof(Sampler::read_format::time_enabled)>();
-    const auto time_running = entry.read<typeof(Sampler::read_format::time_running)>();
+    const auto time_enabled = entry.read<typeof(CounterReadFormat<Group::MAX_MEMBERS>::time_enabled)>();
+    const auto time_running = entry.read<typeof(CounterReadFormat<Group::MAX_MEMBERS>::time_running)>();
     const auto multiplexing_correction = double(time_enabled) / double(time_running);
 
     /// Read the counters (if the number matches the number of specified counters).
-    auto* counter_values = entry.read<read_format::value>(count_counter_values);
+    auto* counter_values = entry.read<CounterReadFormat<Group::MAX_MEMBERS>::value>(count_counter_values);
     if (count_counter_values == sample_counter.group().size()) {
       auto counter_results = std::vector<std::pair<std::string_view, double>>{};
 
@@ -739,7 +678,7 @@ perf::Sampler::read_context_switch_event(perf::Sampler::UserLevelBufferEntry ent
 }
 
 perf::Sample
-perf::Sampler::read_cgroup_event(perf::Sampler::UserLevelBufferEntry entry) const
+perf::Sampler::read_cgroup_event(perf::Sampler::UserLevelBufferEntry entry)
 {
   auto sample = Sample{ entry.mode() };
 
