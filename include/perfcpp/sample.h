@@ -109,7 +109,7 @@ private:
 class Sample
 {
 public:
-  enum Mode
+  enum class Mode
   {
     Unknown,
     Kernel,

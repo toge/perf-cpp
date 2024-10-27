@@ -5,7 +5,7 @@
 bool
 perf::EventCounter::add(std::string&& counter_name)
 {
-  /// "Close" the current group and add new counters to the next group (if possible).
+  /// If the counter has no name, we interpret this as the user wants to "close" the group and add further counters to another one.
   if (counter_name.empty()) {
     if (this->_groups.empty() || this->_groups.back().empty()) {
       return true;
@@ -16,23 +16,20 @@ perf::EventCounter::add(std::string&& counter_name)
       return true;
     }
 
-    return false;
+    throw std::runtime_error{std::string{"Cannot add another group – number of groups: "}.append(std::to_string(this->_groups.size())).append(", maximal number of groups: ").append(std::to_string(std::size_t{this->_config.max_groups()}))};
   }
 
-  /// Try to add the counter, if the name is a counter.
-  auto counter_config = this->_counter_definitions.counter(counter_name);
-  if (counter_config.has_value()) {
+  /// If the given name references an existing counter, add it.
+  if (auto counter_config = this->_counter_definitions.counter(counter_name); counter_config.has_value()) {
     this->add(std::get<0>(counter_config.value()), std::get<1>(counter_config.value()), false);
     return true;
   }
 
-  /// Try to add the metric, if the name is a metric.
-  auto metric = this->_counter_definitions.metric(counter_name);
-  if (metric.has_value()) {
+  /// If the given name references an existing metric, add the metric and all its required counters.
+  if (auto metric = this->_counter_definitions.metric(counter_name); metric.has_value()) {
     /// Add all required counters.
     for (auto&& dependent_counter_name : std::get<1>(metric.value()).required_counter_names()) {
-      auto dependent_counter_config = this->_counter_definitions.counter(dependent_counter_name);
-      if (dependent_counter_config.has_value()) {
+      if (auto dependent_counter_config = this->_counter_definitions.counter(dependent_counter_name); dependent_counter_config.has_value()) {
         this->add(std::get<0>(dependent_counter_config.value()), std::get<1>(dependent_counter_config.value()), true);
       } else {
         throw std::runtime_error{ std::string{ "Cannot find counter '" }
@@ -43,6 +40,7 @@ perf::EventCounter::add(std::string&& counter_name)
       }
     }
 
+    /// If all of the metric's counters could be added (i.e., no exception was thrown), add the metric itself.
     this->_counters.emplace_back(std::get<0>(metric.value()));
     return true;
   }
@@ -64,13 +62,13 @@ perf::EventCounter::add(std::string_view counter_name, perf::CounterConfig count
     return;
   }
 
-  /// Check if space for more counters left.
+  /// Check if space for more counters left: If the latest group is "full", check, if there is space for another group.
   if (this->_groups.size() == this->_config.max_groups() &&
       this->_groups.back().size() >= this->_config.max_counters_per_group()) {
-    throw std::runtime_error{ "No more space for counters left." };
+    throw std::runtime_error{ "Cannot add more counters: Reached maximum number of groups and maximum number of counters in the latest group." };
   }
 
-  /// Add a new group, if needed (no one available or last is full).
+  /// If the latest group is "full", add a new group. We already verified that there will be enough space.
   if (this->_groups.empty() || this->_groups.back().size() >= this->_config.max_counters_per_group()) {
     this->_groups.emplace_back();
   }
@@ -84,13 +82,13 @@ perf::EventCounter::add(std::string_view counter_name, perf::CounterConfig count
 bool
 perf::EventCounter::add(std::vector<std::string>&& counter_names)
 {
-  auto is_all_added = true;
-
+  /// Add all counter names. If one of them fails, add() will throw an exception.
   for (auto& name : counter_names) {
-    is_all_added &= this->add(std::move(name));
+    this->add(std::move(name));
   }
 
-  return is_all_added;
+  /// If no exception was thrown, we are good to go.
+  return true;
 }
 
 bool
@@ -102,32 +100,29 @@ perf::EventCounter::add(const std::vector<std::string>& counter_names)
 bool
 perf::EventCounter::start()
 {
-  auto is_every_counter_started = true;
-
-  /// Open the counters.
+  /// Open all counters. If one of them fails, group.open() will throw an exception.
   for (auto& group : this->_groups) {
-    is_every_counter_started &= group.open(this->_config);
+    group.open(this->_config);
   }
 
-  /// Start the counters.
-  if (is_every_counter_started) {
-    for (auto& group : this->_groups) {
-      is_every_counter_started &= group.start();
-    }
+  /// Start all counters. If one of them fails, group.start() will throw an exception.
+  for (auto& group : this->_groups) {
+    group.start();
   }
 
-  return is_every_counter_started;
+  /// If no exception was thrown, we are good to go.
+  return true;
 }
 
 void
 perf::EventCounter::stop()
 {
-  /// Stop the counters.
+  /// Stop all counters. If one of them fails, group.stop() will throw an exception.
   for (auto& group : this->_groups) {
-    std::ignore = group.stop();
+    group.stop();
   }
 
-  /// Close the counters.
+  /// Close all counters. If one of them fails, group.close() will throw an exception.
   for (auto& group : this->_groups) {
     group.close();
   }
@@ -137,38 +132,36 @@ perf::CounterResult
 perf::EventCounter::result(std::uint64_t normalization) const
 {
   /// Build result with all counters, including hidden ones.
-  auto temporary_result = std::vector<std::pair<std::string_view, double>>{};
-  temporary_result.reserve(this->_counters.size());
+  auto hardware_event_values = std::vector<std::pair<std::string_view, double>>{};
+  hardware_event_values.reserve(this->_counters.size());
 
+  /// Copy only the hardware-event values.
   for (const auto& event : this->_counters) {
     if (event.is_counter()) {
       const auto value = this->_groups[event.group_id()].get(event.in_group_id()) / double(normalization);
-      temporary_result.emplace_back(event.name(), value);
+      hardware_event_values.emplace_back(event.name(), value);
     }
   }
 
-  /// Calculate metrics and copy not-hidden counters.
-  auto counter_result = CounterResult{ std::move(temporary_result) };
+  /// This result only contains hardware-event values to either copy the value (if the event is requested) or use the value for calculating a metric.
+  auto hardware_events_result = CounterResult{ std::move(hardware_event_values) };
+
+  /// List of all requested values (hardware-events and metrics)
   auto result = std::vector<std::pair<std::string_view, double>>{};
   result.reserve(this->_counters.size());
 
   for (const auto& event : this->_counters) {
-    /// Add all not hidden counters...
-    if (event.is_counter()) {
-      if (!event.is_hidden()) {
-        const auto value = counter_result.get(event.name());
-        if (value.has_value()) {
-          result.emplace_back(event.name(), value.value());
-        }
+    /// First, add all hardware events that were requested to be shown: event.is_hidden() indicates that the event was only required by a metric but not requested by the user.
+    if (event.is_counter() && !event.is_hidden()) {
+      if (const auto value = hardware_events_result.get(event.name()); value.has_value()) {
+        result.emplace_back(event.name(), value.value());
       }
     }
 
-    /// ... and all metrics.
+    /// If the event is a metric (not a hardware event), calculate the value of the metric and add it to the result.
     else {
-      auto metric = this->_counter_definitions.metric(event.name());
-      if (metric.has_value()) {
-        const auto value = std::get<1>(metric.value()).calculate(counter_result);
-        if (value.has_value()) {
+      if (auto metric = this->_counter_definitions.metric(event.name()); metric.has_value()) {
+        if (const auto value = std::get<1>(metric.value()).calculate(hardware_events_result); value.has_value()) {
           result.emplace_back(std::get<0>(metric.value()), value.value());
         }
       }
@@ -182,9 +175,7 @@ bool
 perf::MultiEventCounterBase::add(std::vector<EventCounter>& event_counter, std::string&& counter_name)
 {
   for (auto i = 0U; i < event_counter.size() - 1U; ++i) {
-    if (!event_counter[i].add(std::string{ counter_name })) {
-      return false;
-    }
+    event_counter[i].add(std::string{ counter_name });
   }
 
   return event_counter.back().add(std::move(counter_name));
@@ -194,9 +185,7 @@ bool
 perf::MultiEventCounterBase::add(std::vector<EventCounter>& event_counter, std::vector<std::string>&& counter_names)
 {
   for (auto i = 0U; i < event_counter.size() - 1U; ++i) {
-    if (!event_counter[i].add(std::vector<std::string>{ counter_names })) {
-      return false;
-    }
+    event_counter[i].add(std::vector<std::string>{ counter_names });
   }
 
   return event_counter.back().add(std::move(counter_names));
@@ -207,9 +196,7 @@ perf::MultiEventCounterBase::add(std::vector<EventCounter>& event_counter,
                                  const std::vector<std::string>& counter_names)
 {
   for (auto& thread_local_counter : event_counter) {
-    if (!thread_local_counter.add(counter_names)) {
-      return false;
-    }
+    thread_local_counter.add(counter_names);
   }
 
   return true;
@@ -219,44 +206,50 @@ perf::CounterResult
 perf::MultiEventCounterBase::result(const std::vector<perf::EventCounter>& event_counters,
                                     const std::uint64_t normalization)
 {
-  /// Build result with all counters, including hidden ones.
-  const auto& main_perf = event_counters.front();
-  auto temporary_result = std::vector<std::pair<std::string_view, double>>{};
-  temporary_result.reserve(main_perf._counters.size());
+  /// The reference_event_counter is used to access counters (all EventCounters from the list are required to have the same counters but different values).
+  const auto& reference_event_counter = event_counters.front();
 
-  for (const auto& event : main_perf._counters) {
+  /// Build one result of only hardware-event values over all EventCounters by aggregating their values.
+  auto aggregated_hardware_event_values = std::vector<std::pair<std::string_view, double>>{};
+  aggregated_hardware_event_values.reserve(reference_event_counter._counters.size());
+
+  /// For every (hardware) event, accumulate the results for every EventCounter from event_counters.
+  for (const auto& event : reference_event_counter._counters) {
     if (event.is_counter()) {
-      auto value = .0;
-      for (const auto& thread_local_counter : event_counters) {
-        value += thread_local_counter._groups[event.group_id()].get(event.in_group_id());
-      }
-      const auto normalized_value = value / double(normalization);
-      temporary_result.emplace_back(event.name(), normalized_value);
+
+      /// Add up the values from all individual EventCounters in event_counters.
+      const auto value = std::accumulate(
+        event_counters.begin(),
+        event_counters.end(),
+        .0,
+        [id = event.group_id(), in_group_id = event.in_group_id()](const double sum, const auto& event_counter) {
+          return sum + event_counter._groups[id].get(in_group_id);
+      });
+
+      /// Normalize the value (by the given normalization parameter) and add to the aggregated results.
+      aggregated_hardware_event_values.emplace_back(event.name(), value / double(normalization));
     }
   }
 
-  /// Calculate metrics and copy not-hidden counters.
-  auto counter_result = CounterResult{ std::move(temporary_result) };
-  auto result = std::vector<std::pair<std::string_view, double>>{};
-  result.reserve(main_perf._counters.size());
+  /// This result only contains hardware-event values to either copy the value (if the event is requested) or use the value for calculating a metric.
+  auto hardware_event_results = CounterResult{ std::move(aggregated_hardware_event_values) };
 
-  for (const auto& event : main_perf._counters) {
-    /// Add all not hidden counters...
-    if (event.is_counter()) {
-      if (!event.is_hidden()) {
-        const auto value = counter_result.get(event.name());
-        if (value.has_value()) {
-          result.emplace_back(event.name(), value.value());
-        }
+  /// List of all requested values (hardware-events and metrics)
+  auto result = std::vector<std::pair<std::string_view, double>>{};
+  result.reserve(reference_event_counter._counters.size());
+
+  for (const auto& event : reference_event_counter._counters) {
+    /// First, add all hardware events that were requested to be shown: event.is_hidden() indicates that the event was only required by a metric but not requested by the user.
+    if (event.is_counter() && !event.is_hidden()) {
+      if (const auto value = hardware_event_results.get(event.name()); value.has_value()) {
+        result.emplace_back(event.name(), value.value());
       }
     }
 
-    /// ... and all metrics.
+    /// If the event is a metric (not a hardware event), calculate the value of the metric and add it to the result.
     else {
-      auto metric = main_perf._counter_definitions.metric(event.name());
-      if (metric.has_value()) {
-        auto value = std::get<1>(metric.value()).calculate(counter_result);
-        if (value.has_value()) {
+      if (auto metric = reference_event_counter._counter_definitions.metric(event.name()); metric.has_value()) {
+        if (auto value = std::get<1>(metric.value()).calculate(hardware_event_results); value.has_value()) {
           result.emplace_back(std::get<0>(metric.value()), value.value());
         }
       }
@@ -320,12 +313,11 @@ perf::MultiProcessEventCounter::MultiProcessEventCounter(perf::EventCounter&& ev
 bool
 perf::MultiProcessEventCounter::start()
 {
-  auto is_all_started = true;
   for (auto& event_counter : this->_process_local_counter) {
-    is_all_started &= event_counter.start();
+    event_counter.start();
   }
 
-  return is_all_started;
+  return true;
 }
 
 void
@@ -373,12 +365,11 @@ perf::MultiCoreEventCounter::MultiCoreEventCounter(perf::EventCounter&& event_co
 bool
 perf::MultiCoreEventCounter::start()
 {
-  auto is_all_started = true;
   for (auto& event_counter : this->_cpu_local_counter) {
-    is_all_started &= event_counter.start();
+    event_counter.start();
   }
 
-  return is_all_started;
+  return true;
 }
 
 void

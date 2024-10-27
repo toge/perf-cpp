@@ -21,50 +21,6 @@ class Sampler
   friend MultiSamplerBase;
 
 public:
-  /**
-   * What to sample.
-   */
-  enum
-    [[deprecated("Sampler::Type will be replaced by Sampler::values() interface from v.0.9.0.")]] Type : std::uint64_t{
-      InstructionPointer = PERF_SAMPLE_IP,
-      ThreadId = PERF_SAMPLE_TID,
-      Time = PERF_SAMPLE_TIME,
-      LogicalMemAddress = PERF_SAMPLE_ADDR,
-      CounterValues = PERF_SAMPLE_READ,
-      Callchain = PERF_SAMPLE_CALLCHAIN,
-      CPU = PERF_SAMPLE_CPU,
-      Period = PERF_SAMPLE_PERIOD,
-      BranchStack = PERF_SAMPLE_BRANCH_STACK,
-      UserRegisters = PERF_SAMPLE_REGS_USER,
-      Weight = PERF_SAMPLE_WEIGHT,
-      DataSource = PERF_SAMPLE_DATA_SRC,
-      Identifier = PERF_SAMPLE_IDENTIFIER,
-      KernelRegisters = PERF_SAMPLE_REGS_INTR,
-#ifndef PERFCPP_NO_SAMPLE_PHYS_ADDR
-      PhysicalMemAddress = PERF_SAMPLE_PHYS_ADDR,
-#else
-      PhysicalMemAddress = std::uint64_t(1U) << 63,
-#endif
-
-#ifndef PERFCPP_NO_SAMPLE_DATA_PAGE_SIZE /// PERF_SAMPLE_DATA_PAGE_SIZE is provided since Linux Kernel 5.11
-      DataPageSize = PERF_SAMPLE_DATA_PAGE_SIZE,
-#else
-      DataPageSize = std::uint64_t(1U) << 63,
-#endif
-
-#ifndef PERFCPP_NO_SAMPLE_CODE_PAGE_SIZE /// PERF_SAMPLE_CODE_PAGE_SIZE is provided since Linux Kernel 5.11
-      CodePageSize = PERF_SAMPLE_CODE_PAGE_SIZE,
-#else
-      CodePageSize = std::uint64_t(1U) << 63,
-#endif
-
-#ifndef PERFCPP_NO_SAMPLE_WEIGHT_STRUCT /// PERF_SAMPLE_WEIGHT_STRUCT is provided since Linux Kernel 5.12
-      WeightStruct = PERF_SAMPLE_WEIGHT_STRUCT
-#else
-      WeightStruct = std::uint64_t(1U) << 63,
-#endif
-    };
-
   class Values
   {
     friend Sampler;
@@ -315,30 +271,6 @@ public:
     std::optional<PeriodOrFrequency> _period_or_frequency{ std::nullopt };
   };
 
-  [[deprecated("Creating samplers with counters and sampling type will be replaced by Sampler::trigger() and "
-               "Sampler::values() interfaces.")]] Sampler(const CounterDefinition& counter_list,
-                                                          const std::string& counter_name,
-                                                          const std::uint64_t type,
-                                                          SampleConfig config = {})
-    : Sampler(counter_list, std::string{ counter_name }, type, config)
-  {
-  }
-
-  [[deprecated("Creating samplers with counters and sampling type will be replaced by Sampler::trigger() and "
-               "Sampler::values() interfaces.")]] Sampler(const CounterDefinition& counter_list,
-                                                          std::string&& counter_name,
-                                                          const std::uint64_t type,
-                                                          SampleConfig config = {})
-    : Sampler(counter_list, std::vector<std::string>{ std::move(counter_name) }, type, config)
-  {
-  }
-
-  [[deprecated("Creating samplers with counters and sampling type will be replaced by Sampler::trigger() and "
-               "Sampler::values() interfaces.")]] Sampler(const CounterDefinition& counter_list,
-                                                          std::vector<std::string>&& counter_names,
-                                                          std::uint64_t type,
-                                                          SampleConfig config = {});
-
   explicit Sampler(const CounterDefinition& counter_list, SampleConfig config = {})
     : _counter_definitions(counter_list)
     , _config(config)
@@ -511,16 +443,6 @@ public:
    * @return List of sampled events after closing the sampler.
    */
   [[nodiscard]] std::vector<Sample> result(bool sort_by_time = true) const;
-
-  /**
-   * @return The latest error reported by the sampler.
-   */
-  [[deprecated("Error handling will be moved to exceptions only.")]] [[nodiscard]] std::int64_t last_error()
-    const noexcept
-  {
-    return _last_error;
-  }
-
 private:
   /**
    * Represents a counter that is configured to sample;
@@ -741,10 +663,6 @@ private:
   /// This enables the user to open the sampler specifically – or open the
   /// sampler when starting.
   bool _is_opened{ false };
-
-  /// Will be assigned to errorno.
-  /// Attention: Will be deprecated when switching to exceptions only.
-  std::int64_t _last_error{ 0 };
 };
 
 class MultiSamplerBase
@@ -868,36 +786,6 @@ protected:
 class MultiThreadSampler final : public MultiSamplerBase
 {
 public:
-  [[deprecated(
-    "Creating samplers with counters and sampling type will be replaced by MultiThreadSampler::trigger() "
-    "and MultiThreadSampler::values() interfaces.")]] MultiThreadSampler(const CounterDefinition& counter_list,
-                                                                         const std::string& counter_name,
-                                                                         const std::uint64_t type,
-                                                                         const std::uint16_t num_threads,
-                                                                         SampleConfig config = {})
-    : MultiThreadSampler(counter_list, std::string{ counter_name }, type, num_threads, config)
-  {
-  }
-
-  [[deprecated(
-    "Creating samplers with counters and sampling type will be replaced by MultiThreadSampler::trigger() "
-    "and MultiThreadSampler::values() interfaces.")]] MultiThreadSampler(const CounterDefinition& counter_list,
-                                                                         std::string&& counter_name,
-                                                                         const std::uint64_t type,
-                                                                         const std::uint16_t num_threads,
-                                                                         SampleConfig config = {})
-    : MultiThreadSampler(counter_list, std::vector<std::string>{ std::move(counter_name) }, type, num_threads, config)
-  {
-  }
-
-  [[deprecated(
-    "Creating samplers with counters and sampling type will be replaced by MultiThreadSampler::trigger() "
-    "and MultiThreadSampler::values() interfaces.")]] MultiThreadSampler(const CounterDefinition& counter_list,
-                                                                         std::vector<std::string>&& counter_names,
-                                                                         std::uint64_t type,
-                                                                         std::uint16_t num_threads,
-                                                                         SampleConfig config = {});
-
   explicit MultiThreadSampler(const CounterDefinition& counter_list,
                               std::uint16_t num_threads,
                               SampleConfig config = {});
@@ -1074,40 +962,6 @@ private:
 class MultiCoreSampler final : public MultiSamplerBase
 {
 public:
-  [[deprecated(
-    "Creating samplers with counters and sampling type will be replaced by MultiCoreSampler::trigger() and "
-    "MultiCoreSampler::values() interfaces from v.0.9.0.")]] MultiCoreSampler(const CounterDefinition& counter_list,
-                                                                              const std::string& counter_name,
-                                                                              const std::uint64_t type,
-                                                                              std::vector<std::uint16_t>&& core_ids,
-                                                                              SampleConfig config = {})
-    : MultiCoreSampler(counter_list, std::string{ counter_name }, type, std::move(core_ids), config)
-  {
-  }
-
-  [[deprecated(
-    "Creating samplers with counters and sampling type will be replaced by MultiCoreSampler::trigger() and "
-    "MultiCoreSampler::values() interfaces from v.0.9.0.")]] MultiCoreSampler(const CounterDefinition& counter_list,
-                                                                              std::string&& counter_name,
-                                                                              const std::uint64_t type,
-                                                                              std::vector<std::uint16_t>&& core_ids,
-                                                                              SampleConfig config = {})
-    : MultiCoreSampler(counter_list,
-                       std::vector<std::string>{ std::move(counter_name) },
-                       type,
-                       std::move(core_ids),
-                       config)
-  {
-  }
-
-  [[deprecated(
-    "Creating samplers with counters and sampling type will be replaced by MultiCoreSampler::trigger() and "
-    "MultiCoreSampler::values() interfaces from v.0.9.0.")]] MultiCoreSampler(const CounterDefinition& counter_list,
-                                                                              std::vector<std::string>&& counter_names,
-                                                                              std::uint64_t type,
-                                                                              std::vector<std::uint16_t>&& core_ids,
-                                                                              SampleConfig config = {});
-
   explicit MultiCoreSampler(const CounterDefinition& counter_list,
                             std::vector<std::uint16_t>&& core_ids,
                             SampleConfig config = {});

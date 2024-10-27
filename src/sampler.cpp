@@ -5,75 +5,6 @@
 #include <sys/mman.h>
 #include <utility>
 
-perf::Sampler::Sampler(const perf::CounterDefinition& counter_list,
-                       std::vector<std::string>&& counter_names,
-                       const std::uint64_t type,
-                       perf::SampleConfig config)
-  : _counter_definitions(counter_list)
-  , _config(config)
-{
-  _values.instruction_pointer(static_cast<bool>(type & PERF_SAMPLE_IP))
-    .thread_id(static_cast<bool>(type & PERF_SAMPLE_TID))
-    .time(static_cast<bool>(type & PERF_SAMPLE_TIME))
-    .logical_memory_address(static_cast<bool>(type & PERF_SAMPLE_ADDR))
-    .callchain(static_cast<bool>(type & PERF_SAMPLE_CALLCHAIN))
-    .cpu_id(static_cast<bool>(type & PERF_SAMPLE_CPU))
-    .weight(static_cast<bool>(type & PERF_SAMPLE_WEIGHT))
-    .data_src(static_cast<bool>(type & PERF_SAMPLE_DATA_SRC))
-    .identifier(static_cast<bool>(type & PERF_SAMPLE_IDENTIFIER))
-#ifndef PERFCPP_NO_SAMPLE_PHYS_ADDR
-    .physical_memory_address(static_cast<bool>(type & PERF_SAMPLE_PHYS_ADDR))
-#endif
-    .data_page_size(static_cast<bool>(type & Type::DataPageSize))
-    .code_page_size(static_cast<bool>(type & Type::CodePageSize))
-    .weight_struct(static_cast<bool>(type & Type::WeightStruct));
-
-  if (_values.is_set(PERF_SAMPLE_CALLCHAIN)) {
-    _values.callchain(this->_config.max_stack());
-  }
-
-  if (static_cast<bool>(type & PERF_SAMPLE_BRANCH_STACK)) {
-    _values._branch_mask = config.branch_type();
-    _values.set(PERF_SAMPLE_BRANCH_STACK, true);
-  }
-
-  if (static_cast<bool>(type & PERF_SAMPLE_REGS_USER)) {
-    _values.user_registers(config.user_registers());
-  }
-
-  if (static_cast<bool>(type & PERF_SAMPLE_REGS_INTR)) {
-    _values.kernel_registers(config.kernel_registers());
-  }
-
-  /// Extract trigger(s) (the first counter and the second, if the first is an aux counter)
-  /// and counter names that will be added to samples.
-  bool has_auxiliary = false;
-  auto trigger_names = std::vector<std::string>{};
-  auto read_counter_names = std::vector<std::string>{};
-  for (auto counter_id = 0U; counter_id < counter_names.size(); ++counter_id) {
-    auto& counter_name = counter_names[counter_id];
-    if (!this->_counter_definitions.is_metric(counter_name)) /// Metrics are not (yet) supported.
-    {
-      if (auto counter_config = this->_counter_definitions.counter(counter_name); counter_config.has_value()) {
-        if (counter_id == 0U && counter_config->second.is_auxiliary()) {
-          has_auxiliary = true;
-        }
-        if ((has_auxiliary && counter_id < 2U) || counter_id < 1U) {
-          trigger_names.push_back(std::move(counter_name));
-        } else {
-          read_counter_names.emplace_back(std::move(counter_name));
-        }
-      }
-    }
-  }
-
-  /// Add trigger and counters.
-  this->trigger(std::move(trigger_names));
-  if (!read_counter_names.empty()) {
-    this->_values.counter(std::move(read_counter_names));
-  }
-}
-
 perf::Sampler::~Sampler()
 {
   this->close();
@@ -83,16 +14,16 @@ perf::Sampler&
 perf::Sampler::trigger(std::vector<std::vector<std::string>>&& list_of_trigger_names)
 {
   auto triggers = std::vector<std::vector<Trigger>>{};
-  triggers.reserve(triggers.size());
+  triggers.reserve(list_of_trigger_names.size());
 
+  /// Turn the list of event names in a list of Sampler::Trigger objects and continue processing (checking if the
+  /// trigger is an existing event, not a metric, etc.) there.
   for (auto& trigger_names : list_of_trigger_names) {
     auto trigger_with_precision = std::vector<Trigger>{};
-
-    trigger_with_precision.reserve(trigger_names.size());
-    for (auto& trigger_name : trigger_names) {
-      trigger_with_precision.emplace_back(std::move(trigger_name));
-    }
-
+    std::transform(trigger_names.begin(),
+                   trigger_names.end(),
+                   std::back_inserter(trigger_with_precision),
+                   [](auto& name) { return Trigger{ std::move(name) }; });
     triggers.push_back(std::move(trigger_with_precision));
   }
 
@@ -107,18 +38,23 @@ perf::Sampler::trigger(std::vector<std::vector<Trigger>>&& triggers)
   for (auto& trigger_group : triggers) {
     auto trigger_group_references =
       std::vector<std::tuple<std::string_view, std::optional<Precision>, std::optional<PeriodOrFrequency>>>{};
+    trigger_group_references.reserve(trigger_group.size());
+
     for (auto& trigger : trigger_group) {
-      if (!this->_counter_definitions.is_metric(trigger.name())) {
-        if (auto counter_config = this->_counter_definitions.counter(trigger.name()); counter_config.has_value()) {
-          trigger_group_references.emplace_back(
-            std::get<0>(counter_config.value()), trigger.precision(), trigger.period_or_frequency());
-        } else {
-          throw std::runtime_error{ std::string{ "Cannot find counter '" }.append(trigger.name()).append("'.") };
-        }
-      } else {
+      /// Reject metrics as trigger events as metrics consist of multiple events.
+      if (this->_counter_definitions.is_metric(trigger.name())) {
         throw std::runtime_error{ std::string{ "Counter '" }
                                     .append(trigger.name())
                                     .append("' seems to be a metric. Metrics are not supported as triggers.") };
+      }
+
+      /// Read the config (like event id etc.) from every trigger name and verify that the trigger event exists in the
+      /// CounterDefinition.
+      if (auto counter_config = this->_counter_definitions.counter(trigger.name()); counter_config.has_value()) {
+        trigger_group_references.emplace_back(
+          std::get<0>(counter_config.value()), trigger.precision(), trigger.period_or_frequency());
+      } else {
+        throw std::runtime_error{ std::string{ "Cannot find counter '" }.append(trigger.name()).append("'.") };
       }
     }
     this->_triggers.push_back(std::move(trigger_group_references));
@@ -144,6 +80,8 @@ perf::Sampler::open()
     for (const auto trigger : trigger_group) {
       if (auto counter_name_and_config = this->_counter_definitions.counter(std::get<0>(trigger));
           counter_name_and_config.has_value()) {
+
+        /// Read the counter config (like event id, etc.).
         auto counter_config = std::get<1>(counter_name_and_config.value());
 
         /// Set the counters precise_ip (fall back to config if empty).
@@ -166,6 +104,7 @@ perf::Sampler::open()
         /// Add the counter to the group.
         group.add(counter_config);
 
+        /// Notice the counter name of the trigger event.
         if (this->_values.is_set(PERF_SAMPLE_READ)) {
           counter_names.push_back(std::get<0>(trigger));
         }
@@ -178,21 +117,20 @@ perf::Sampler::open()
 
         for (const auto& counter_name : this->_values.counters()) {
 
-          /// Validate the counter is not a metric.
-          if (!this->_counter_definitions.is_metric(counter_name)) {
-
-            /// Find the counter.
-            if (auto counter_config = this->_counter_definitions.counter(counter_name); counter_config.has_value()) {
-              /// Add the counter to the group and to the list of counters.
-              counter_names.push_back(std::get<0>(counter_config.value()));
-              group.add(std::get<1>(counter_config.value()));
-            } else {
-              throw std::runtime_error{ std::string{ "Cannot find counter '" }.append(counter_name).append("'.") };
-            }
-          } else {
+          /// Verify the counter is not a metric.
+          if (this->_counter_definitions.is_metric(counter_name)) {
             throw std::runtime_error{ std::string{ "Counter '" }
                                         .append(counter_name)
                                         .append("' seems to be a metric. Metrics are not supported for sampling.") };
+          }
+
+          /// Find the counter.
+          if (auto counter_config = this->_counter_definitions.counter(counter_name); counter_config.has_value()) {
+            /// Add the counter to the group and to the list of counters.
+            counter_names.push_back(std::get<0>(counter_config.value()));
+            group.add(std::get<1>(counter_config.value()));
+          } else {
+            throw std::runtime_error{ std::string{ "Cannot find counter '" }.append(counter_name).append("'.") };
           }
         }
       }
@@ -275,7 +213,6 @@ perf::Sampler::open()
                           0);
 
     if (buffer == MAP_FAILED) {
-      this->_last_error = errno;
       throw std::runtime_error{ "Creating buffer via mmap() failed." };
     }
 
@@ -780,79 +717,6 @@ perf::MultiSamplerBase::start(perf::Sampler& sampler, const perf::SampleConfig c
 }
 
 perf::MultiThreadSampler::MultiThreadSampler(const perf::CounterDefinition& counter_list,
-                                             std::vector<std::string>&& counter_names,
-                                             const std::uint64_t type,
-                                             const std::uint16_t num_threads,
-                                             const perf::SampleConfig config)
-  : MultiSamplerBase(config)
-{
-  /// Setup new values field (will be transferred to samplers at start).
-  _values.instruction_pointer(static_cast<bool>(type & PERF_SAMPLE_IP))
-    .thread_id(static_cast<bool>(type & PERF_SAMPLE_TID))
-    .time(static_cast<bool>(type & PERF_SAMPLE_TIME))
-    .logical_memory_address(static_cast<bool>(type & PERF_SAMPLE_ADDR))
-    .callchain(static_cast<bool>(type & PERF_SAMPLE_CALLCHAIN))
-    .cpu_id(static_cast<bool>(type & PERF_SAMPLE_CPU))
-    .weight(static_cast<bool>(type & PERF_SAMPLE_WEIGHT))
-    .data_src(static_cast<bool>(type & PERF_SAMPLE_DATA_SRC))
-    .identifier(static_cast<bool>(type & PERF_SAMPLE_IDENTIFIER))
-#ifndef PERFCPP_NO_SAMPLE_PHYS_ADDR
-    .physical_memory_address(static_cast<bool>(type & PERF_SAMPLE_PHYS_ADDR))
-#endif
-    .data_page_size(static_cast<bool>(type & Sampler::Type::DataPageSize))
-    .code_page_size(static_cast<bool>(type & Sampler::Type::CodePageSize))
-    .weight_struct(static_cast<bool>(type & Sampler::Type::WeightStruct));
-
-  if (static_cast<bool>(type & PERF_SAMPLE_BRANCH_STACK)) {
-    _values._branch_mask = config.branch_type();
-    _values.set(PERF_SAMPLE_BRANCH_STACK, true);
-  }
-
-  if (static_cast<bool>(type & PERF_SAMPLE_REGS_USER)) {
-    _values.user_registers(config.user_registers());
-  }
-
-  if (static_cast<bool>(type & PERF_SAMPLE_REGS_INTR)) {
-    _values.kernel_registers(config.kernel_registers());
-  }
-
-  /// Extract trigger(s) (the first counter and the second, if the first is an aux counter)
-  /// and counter names that will be added to samples.
-  bool has_auxiliary = false;
-  auto trigger_names = std::vector<std::string>{};
-  auto read_counter_names = std::vector<std::string>{};
-  for (auto counter_id = 0U; counter_id < counter_names.size(); ++counter_id) {
-    auto& counter_name = counter_names[counter_id];
-    if (!counter_list.is_metric(counter_name)) /// Metrics are not (yet) supported.
-    {
-      if (auto counter_config = counter_list.counter(counter_name); counter_config.has_value()) {
-        if (counter_id == 0U && counter_config->second.is_auxiliary()) {
-          has_auxiliary = true;
-        }
-        if ((has_auxiliary && counter_id < 2U) || counter_id < 1U) {
-          trigger_names.push_back(std::move(counter_name));
-        } else {
-          read_counter_names.emplace_back(std::move(counter_name));
-        }
-      }
-    }
-  }
-
-  /// Add trigger and counters.
-  if (!read_counter_names.empty()) {
-    this->_values.counter(std::move(read_counter_names));
-  }
-
-  /// Create thread-local samplers without config (will be set when starting).
-  for (auto thread_id = 0U; thread_id < num_threads; ++thread_id) {
-    auto& thread_sampler = this->_thread_local_samplers.emplace_back(counter_list);
-    if (!trigger_names.empty()) {
-      thread_sampler.trigger(std::vector<std::vector<std::string>>{ trigger_names });
-    }
-  }
-}
-
-perf::MultiThreadSampler::MultiThreadSampler(const perf::CounterDefinition& counter_list,
                                              const std::uint16_t num_threads,
                                              const perf::SampleConfig config)
   : MultiSamplerBase(config)
@@ -860,83 +724,6 @@ perf::MultiThreadSampler::MultiThreadSampler(const perf::CounterDefinition& coun
   /// Create thread-local samplers without config (will be set when starting).
   for (auto thread_id = 0U; thread_id < num_threads; ++thread_id) {
     this->_thread_local_samplers.emplace_back(counter_list);
-  }
-}
-
-perf::MultiCoreSampler::MultiCoreSampler(const perf::CounterDefinition& counter_list,
-                                         std::vector<std::string>&& counter_names,
-                                         const std::uint64_t type,
-                                         std::vector<std::uint16_t>&& core_ids,
-                                         perf::SampleConfig config)
-  : MultiSamplerBase(config)
-  , _core_ids(std::move(core_ids))
-{
-  /// Record all processes on the CPUs.
-  _config.process_id(-1);
-
-  /// Setup new values field (will be transferred to samplers at start).
-  _values.instruction_pointer(static_cast<bool>(type & PERF_SAMPLE_IP))
-    .thread_id(static_cast<bool>(type & PERF_SAMPLE_TID))
-    .time(static_cast<bool>(type & PERF_SAMPLE_TIME))
-    .logical_memory_address(static_cast<bool>(type & PERF_SAMPLE_ADDR))
-    .callchain(static_cast<bool>(type & PERF_SAMPLE_CALLCHAIN))
-    .cpu_id(static_cast<bool>(type & PERF_SAMPLE_CPU))
-    .weight(static_cast<bool>(type & PERF_SAMPLE_WEIGHT))
-    .data_src(static_cast<bool>(type & PERF_SAMPLE_DATA_SRC))
-    .identifier(static_cast<bool>(type & PERF_SAMPLE_IDENTIFIER))
-#ifndef PERFCPP_NO_SAMPLE_PHYS_ADDR
-    .physical_memory_address(static_cast<bool>(type & PERF_SAMPLE_PHYS_ADDR))
-#endif
-    .data_page_size(static_cast<bool>(type & Sampler::Type::DataPageSize))
-    .code_page_size(static_cast<bool>(type & Sampler::Type::CodePageSize))
-    .weight_struct(static_cast<bool>(type & Sampler::Type::WeightStruct));
-
-  if (static_cast<bool>(type & PERF_SAMPLE_BRANCH_STACK)) {
-    _values._branch_mask = config.branch_type();
-    _values.set(PERF_SAMPLE_BRANCH_STACK, true);
-  }
-
-  if (static_cast<bool>(type & PERF_SAMPLE_REGS_USER)) {
-    _values.user_registers(config.user_registers());
-  }
-
-  if (static_cast<bool>(type & PERF_SAMPLE_REGS_INTR)) {
-    _values.kernel_registers(config.kernel_registers());
-  }
-
-  /// Extract trigger(s) (the first counter and the second, if the first is an aux counter)
-  /// and counter names that will be added to samples.
-  bool has_auxiliary = false;
-  auto trigger_names = std::vector<std::string>{};
-  auto read_counter_names = std::vector<std::string>{};
-  for (auto counter_id = 0U; counter_id < counter_names.size(); ++counter_id) {
-    auto& counter_name = counter_names[counter_id];
-    if (!counter_list.is_metric(counter_name)) /// Metrics are not (yet) supported.
-    {
-      if (auto counter_config = counter_list.counter(counter_name); counter_config.has_value()) {
-        if (counter_id == 0U && counter_config->second.is_auxiliary()) {
-          has_auxiliary = true;
-        }
-        if ((has_auxiliary && counter_id < 2U) || counter_id < 1U) {
-          trigger_names.push_back(std::move(counter_name));
-        } else {
-          read_counter_names.emplace_back(std::move(counter_name));
-        }
-      }
-    }
-  }
-
-  /// Add trigger and counters.
-  if (!read_counter_names.empty()) {
-    this->_values.counter(std::move(read_counter_names));
-  }
-
-  /// Create thread-local samplers without config (will be set when starting).
-  for (const auto _ : this->_core_ids) {
-    auto& cpu_sampler = this->_core_local_samplers.emplace_back(counter_list);
-    if (!trigger_names.empty()) {
-      cpu_sampler.trigger(std::vector<std::vector<std::string>>{ trigger_names });
-    }
   }
 }
 

@@ -113,6 +113,9 @@ private:
   /// End value of the hardware performance counters.
   CounterReadFormat<Group::MAX_MEMBERS> _end_value{};
 
+  /// After stopping the group, we calculate the multiplexing correction once from start- and end-values.
+  double _multiplexing_correction{};
+
   /**
    * Reads the value of a specific counter (identified by the given ID) from the provided value set.
    *
