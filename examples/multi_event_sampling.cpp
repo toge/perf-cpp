@@ -16,8 +16,6 @@ main()
   /// Note that the perf::CounterDefinition holds all counter names and must be
   /// alive until the benchmark finishes.
   auto counter_definitions = perf::CounterDefinition{};
-  counter_definitions.add("loads", perf::CounterConfig{ PERF_TYPE_RAW, 0x1CD, 0x3 });
-  counter_definitions.add("stores", perf::CounterConfig{ PERF_TYPE_RAW, 0x2CD });
 
   /// Initialize sampler.
   auto perf_config = perf::SampleConfig{};
@@ -30,16 +28,16 @@ main()
       sampler.trigger({
         {
           perf::Sampler::Trigger{ "mem-loads-aux", perf::Precision::MustHaveZeroSkid }, /// Helper
-          perf::Sampler::Trigger{ "loads", perf::Precision::RequestZeroSkid }           /// Loads
+          perf::Sampler::Trigger{ "mem-loads", perf::Precision::RequestZeroSkid }       /// Loads
         },
-        { perf::Sampler::Trigger{ "stores", perf::Precision::MustHaveZeroSkid } } /// Stores
+        { perf::Sampler::Trigger{ "mem-stores", perf::Precision::MustHaveZeroSkid } } /// Stores
       });
     } else {
       sampler.trigger(std::vector<std::vector<perf::Sampler::Trigger>>{
         {
-          perf::Sampler::Trigger{ "loads", perf::Precision::RequestZeroSkid } /// Loads
+          perf::Sampler::Trigger{ "mem-loads", perf::Precision::RequestZeroSkid } /// Loads
         },
-        { perf::Sampler::Trigger{ "stores", perf::Precision::MustHaveZeroSkid } } /// Stores
+        { perf::Sampler::Trigger{ "mem-stores", perf::Precision::MustHaveZeroSkid } } /// Stores
       });
     }
   } else {

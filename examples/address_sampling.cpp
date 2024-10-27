@@ -15,7 +15,6 @@ main()
   /// Note that the perf::CounterDefinition holds all counter names and must be
   /// alive until the benchmark finishes.
   auto counter_definitions = perf::CounterDefinition{};
-  counter_definitions.add("mem_trans_retired.load_latency_gt_3", perf::CounterConfig{ PERF_TYPE_RAW, 0x1CD, 0x3 });
 
   /// Initialize sampler.
   auto perf_config = perf::SampleConfig{};
@@ -29,11 +28,10 @@ main()
   } else if (perf::HardwareInfo::is_intel()) {
     if (perf::HardwareInfo::is_intel_aux_counter_required()) {
       /// Note: For sampling on Sapphire Rapids, we have to prepend an auxiliary counter.
-      sampler.trigger(
-        { perf::Sampler::Trigger{ "mem-loads-aux", perf::Precision::MustHaveZeroSkid },
-          perf::Sampler::Trigger{ "mem_trans_retired.load_latency_gt_3", perf::Precision::MustHaveZeroSkid } });
+      sampler.trigger({ perf::Sampler::Trigger{ "mem-loads-aux", perf::Precision::MustHaveZeroSkid },
+                        perf::Sampler::Trigger{ "mem-loads", perf::Precision::MustHaveZeroSkid } });
     } else {
-      sampler.trigger("mem_trans_retired.load_latency_gt_3", perf::Precision::MustHaveZeroSkid);
+      sampler.trigger("mem-loads", perf::Precision::MustHaveZeroSkid);
     }
   } else {
     std::cout << "Error: Memory sampling is not supported on this CPU." << std::endl;

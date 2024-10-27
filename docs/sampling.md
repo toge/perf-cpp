@@ -566,22 +566,24 @@ In addition, the following data will be set in a sample:
 
 ## Specific Notes for different CPU Vendors
 ### Intel (PEBS)
-Especially sampling for memory addresses, latency, and data source needs specific triggers.
+Especially for sampling memory addresses, latency, and data source, the perf subsystem needs specific events as triggers.
 On Intel, the `perf list` command reports these triggers as "*Supports address when precise*".
-Additionally, memory sampling typically requires a [precision](#precision) setting of at least `perf::Precision::RequestZeroSkid`.
 
+*perf-cpp*  will discover `mem-loads` and `mem-stores` events when running on Intel hardware that supports sampling for memory
+
+
+Additionally, memory sampling typically requires a [precision](#precision) setting of at least `perf::Precision::RequestZeroSkid`.
 #### Sapphire Rapids
 To use weight-sampling on Intel's Sapphire Rapids architecture, the perf subsystem needs an auxiliary counter to be added to the group, before the first "real" counter is added (see [this commit](https://lore.kernel.org/lkml/1612296553-21962-3-git-send-email-kan.liang@linux.intel.com/)).
-*perf-cpp*  defines this counter, you only need to add it accordingly.
-For example, to record loads (counter `0x1CD`) and stores (counter `0x2CD`):
+*perf-cpp*  will define this counter, you only need to add it accordingly.
 
 ```cpp
 sampler.trigger({
     { 
         perf::Sampler::Trigger{"mem-loads-aux", perf::Precision::MustHaveZeroSkid}, /// Helper
-        perf::Sampler::Trigger{"loads", perf::Precision::RequestZeroSkid}           /// First "real" counter
+        perf::Sampler::Trigger{"mem-loads", perf::Precision::RequestZeroSkid}           /// First "real" counter
     },
-    { perf::Sampler::Trigger{"stores", perf::Precision::MustHaveZeroSkid} }         /// Other "real" counters.
+    { perf::Sampler::Trigger{"mem-stores", perf::Precision::MustHaveZeroSkid} }         /// Other "real" counters.
   });
 ```
 

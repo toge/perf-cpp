@@ -1,8 +1,8 @@
 #pragma once
 
 #include <cstdint>
-#include <fstream>
 #include <optional>
+#include <string>
 #if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
 #endif
@@ -34,6 +34,21 @@ public:
 
     return false;
   }
+
+  /**
+   * @return The id of Intel's PEBS "mem-loads-aux" event.
+   */
+  [[nodiscard]] static std::optional<std::uint64_t> intel_pebs_mem_loads_aux_event_id();
+
+  /**
+   * @return The id of Intel's PEBS "mem-loads" event.
+   */
+  [[nodiscard]] static std::optional<std::uint64_t> intel_pebs_mem_loads_event_id();
+
+  /**
+   * @return The id of Intel's PEBS "mem-stores" event.
+   */
+  [[nodiscard]] static std::optional<std::uint64_t> intel_pebs_mem_stores_event_id();
 
   /**
    * @return True, if the underlying hardware is an AMD processor.
@@ -78,37 +93,20 @@ public:
   /**
    * @return The config type for IBS execution counter, if IBS is supported by the underlying hardware.
    */
-  [[nodiscard]] static std::optional<std::uint32_t> amd_ibs_op_type()
-  {
-    if (is_amd_ibs_supported()) {
-      auto ibs_op_stream = std::ifstream{ "/sys/bus/event_source/devices/ibs_op/type" };
-      if (ibs_op_stream.is_open()) {
-        std::uint32_t type;
-        ibs_op_stream >> type;
-
-        return type;
-      }
-    }
-
-    return std::nullopt;
-  }
+  [[nodiscard]] static std::optional<std::uint32_t> amd_ibs_op_type();
 
   /**
    * @return The config type for IBS fetch counter, if IBS is supported by the underlying hardware.
    */
-  [[nodiscard]] static std::optional<std::uint32_t> amd_ibs_fetch_type()
-  {
-    if (is_amd_ibs_supported()) {
-      auto ibs_op_stream = std::ifstream{ "/sys/bus/event_source/devices/ibs_fetch/type" };
-      if (ibs_op_stream.is_open()) {
-        std::uint32_t type;
-        ibs_op_stream >> type;
+  [[nodiscard]] static std::optional<std::uint32_t> amd_ibs_fetch_type();
 
-        return type;
-      }
-    }
-
-    return std::nullopt;
-  }
+private:
+  /**
+   * Tries to read event and umask from the provided file.
+   *
+   * @param path Path to the file.
+   * @return Integer representation of event and umask.
+   */
+  [[nodiscard]] static std::optional<std::uint64_t> parse_event_umask_from_file(std::string&& path);
 };
 }

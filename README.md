@@ -1,11 +1,11 @@
-# *perf-cpp*: Performance Counter Wrapper for C++
+# *perf-cpp*: Access Performance Counter from C++
 
-*perf-cpp* is a streamlined C++ library that leverages the *perf subsystem* on Linux to enable performance counters directly from the application. 
+*perf-cpp* is a streamlined C++ library that leverages the *perf subsystem* on Linux to access hardware performance counters directly from the application. 
 The key features are:
 
-* **Simplified Performance Measurement**: Directly interact with hardware performance counters from your C++ application within specific code segments (&rarr;[read the documentation](docs/recording.md)).
-* **Event Sampling**: Leverage sampling to gather performance data periodically, enabling efficient analysis of resource usage (including instruction pointers, data, branches, registers, and more) over time and/or execution (&rarr;[read the documentation](docs/sampling.md)).
-* **Customizable Counter Management**: Easily extend the built-in counters with those specific to your underlying hardware substrate (&rarr;[read the documentation](docs/counters.md)).
+* **Simplified Performance Measurement**: Directly interact with hardware performance counters from your C++ application within specific code segments (&rarr;[documentation](docs/recording.md)).
+* **Event Sampling**: Leverage sampling to gather performance data periodically, enabling efficient analysis of resource usage (e.g., instruction pointers, data addresses, access latency, branches, registers, and more) over time and/or execution (&rarr;[documentation](docs/sampling.md)).
+* **Customizable Events**: Easily extend the built-in hardware events with those specific to your underlying hardware substrate (&rarr;[documentation](docs/counters.md)).
 * We included various [**examples**](examples/) to learn how to utilize the library from your C++ application.
 
 Author: Jan Mühlig (`jan.muehlig@tu-dortmund.de`)
@@ -13,18 +13,11 @@ Author: Jan Mühlig (`jan.muehlig@tu-dortmund.de`)
 ----
 
 ## Getting Started
-
-### Quick Examples
 Capture performance counters and samples directly within your C++ application, focusing exclusively on the code crucial to your analysis.
 
 &rarr; Further details are available in the [documentation](docs/README.md).
 
-#### Record Counters
-The `perf::EventCounter` class offers an interface to record hardware performance counter statistics over a specific code segment – comparable to the `perf stat` command.
-You can add and manage counters, as well as to start and stop recordings.
-
-&rarr; See the documentation for [recording basics](docs/recording.md) and [multithreaded](docs/recording-parallel.md) recording.
-
+### Record Counters
 ```cpp
 #include <perfcpp/event_counter.h>
 auto counter_definitions = perf::CounterDefinition{};
@@ -49,12 +42,12 @@ for (const auto [name, value] : result)
 // cache-misses: 1.36517e+07
 ```
 
-#### Sampling
-The `perf::Sampler` class provides an interface to specify sampling criteria and control the start/stop of recordings – comparable to `perf [mem|c2c] record` and `perf report`; but with control of the recorded code segments.
-You can sample various aspects such as instructions, time, memory addresses, access latency, call chains, branches, and more.
+The `perf::EventCounter` class offers an interface to record hardware performance counter statistics over a specific code segment – comparable to the `perf stat` command.
+You can add and manage counters, as well as to start and stop recordings.
 
-&rarr; See the documentation for [sampling basics](docs/sampling.md) and [multithreaded sampling](docs/sampling-parallel.md).
+&rarr; See the documentation for [recording basics](docs/recording.md) and [multithreaded](docs/recording-parallel.md) recording.
 
+### Sampling
 ```cpp
 #include <perfcpp/sampler.h>
 auto counter_definitions = perf::CounterDefinition{};
@@ -99,8 +92,14 @@ sampler.close();
 // ...
 ```
 
-### Building
-*perf-cpp* can be built by hand or included into CMake projects (&rarr; [see more details](docs/build.md)).
+The `perf::Sampler` class provides an interface to specify sampling criteria and control the start/stop of recordings – comparable to `perf [mem|c2c] record` and `perf report`; but with control of the recorded code segments.
+You can sample various aspects such as instructions, time, memory addresses, access latency, call chains, branches, and more.
+
+&rarr; See the documentation for [sampling basics](docs/sampling.md) and [multithreaded sampling](docs/sampling-parallel.md).
+
+
+## Build *perf-cpp*
+*perf-cpp* can be built by hand or included into CMake projects (&rarr; [more details in the documentation](docs/build.md)).
 
 ```
 /// 1) Clone the repository
@@ -135,13 +134,19 @@ cmake --build build --target examples
   * [Overview and Basics of Event Sampling](docs/sampling.md)
   * [Event Sampling in Parallel (multithread / multicore) Settings](docs/sampling-parallel.md)
 * [Built-in and Hardware-specific Performance Counters](docs/counters.md)
+* [Changelog](CHANGELOG.md)
 
 ---
 
-## Sophisticated Code Examples
+## More Code Examples
 We provide a variety of [examples](examples/) detailed below. 
 
-Build them effortlessly by running `cmake --build build --target examples`. 
+Build them effortlessly by running 
+```
+cmake . -B build -DBUILD_EXAMPLES=1
+cmake --build build --target examples
+```
+
 All compiled example binaries are located in `build/examples/bin` and can be executed directly without additional arguments.
 
 ### Recording Performance Counter Statistics

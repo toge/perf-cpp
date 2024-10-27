@@ -150,9 +150,25 @@ perf::CounterDefinition::initialize_amd_ibs_counters()
 void
 perf::CounterDefinition::initialize_intel_pebs_counters()
 {
-  if (HardwareInfo::is_intel() && HardwareInfo::is_intel_aux_counter_required()) {
-    /// Auxiliary event, needed on some Intel architectures.
-    this->add("mem-loads-aux", PERF_TYPE_RAW, 0x8203);
+  if (HardwareInfo::is_intel()) {
+    if (HardwareInfo::is_intel_aux_counter_required()) {
+      /// Auxiliary event, needed on some Intel architectures.
+      if (const auto mem_loads_aux_event_id = HardwareInfo::intel_pebs_mem_loads_aux_event_id();
+          mem_loads_aux_event_id.has_value()) {
+        this->add("mem-loads-aux", PERF_TYPE_RAW, mem_loads_aux_event_id.value());
+      }
+    }
+
+    /// mem-loads event.
+    if (const auto mem_loads_event_id = HardwareInfo::intel_pebs_mem_loads_event_id(); mem_loads_event_id.has_value()) {
+      this->add("mem-loads", PERF_TYPE_RAW, mem_loads_event_id.value());
+    }
+
+    /// mem-loads event.
+    if (const auto mem_stores_event_id = HardwareInfo::intel_pebs_mem_stores_event_id();
+        mem_stores_event_id.has_value()) {
+      this->add("mem-stores", PERF_TYPE_RAW, mem_stores_event_id.value());
+    }
   }
 }
 
