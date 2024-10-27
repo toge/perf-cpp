@@ -227,14 +227,15 @@ private:
    * @param mask Given mask to check if the type is set.
    * @param type Type to test in the mask.
    * @param name Name to print if the type is set.
-   * @param is_first Flag if this is the first printed name. If false, a separator is printed in front of the name.
+   * @param is_need_print_delimiter Flag if this is the first printed name. If false, a delimiter is printed in front of
+   * the name.
    * @return True, if this was the first printed type.
    */
   static bool print_type_to_stream(std::stringstream& stream,
                                    std::uint64_t mask,
                                    std::uint64_t type,
                                    std::string&& name,
-                                   bool is_first);
+                                   bool is_need_print_delimiter);
 };
 
 /**
