@@ -47,7 +47,7 @@ perf::HardwareInfo::parse_event_umask_from_file(std::string&& path)
       auto event = std::optional<std::string>{ std::nullopt };
       auto umask = std::optional<std::string>{ std::nullopt };
 
-      auto token_stream = std::stringstream{};
+      auto token_stream = std::stringstream{std::move(line)};
       std::string token;
 
       /// Process every token where tokens are separated by ','.
