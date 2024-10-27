@@ -569,10 +569,13 @@ In addition, the following data will be set in a sample:
 Especially for sampling memory addresses, latency, and data source, the perf subsystem needs specific events as triggers.
 On Intel, the `perf list` command reports these triggers as "*Supports address when precise*".
 
-*perf-cpp*  will discover `mem-loads` and `mem-stores` events when running on Intel hardware that supports sampling for memory
-
+*perf-cpp*  will discover `mem-loads` and `mem-stores` events when running on Intel hardware that supports sampling for memory.
 
 Additionally, memory sampling typically requires a [precision](#precision) setting of at least `perf::Precision::RequestZeroSkid`.
+
+#### Before Sapphire Rapids
+From our experience, Intel's Cascade Lake architecture (and earlier architectures) only reports latency and source for memory loads, not stores – this changes from Sapphire Rapids.
+
 #### Sapphire Rapids
 To use weight-sampling on Intel's Sapphire Rapids architecture, the perf subsystem needs an auxiliary counter to be added to the group, before the first "real" counter is added (see [this commit](https://lore.kernel.org/lkml/1612296553-21962-3-git-send-email-kan.liang@linux.intel.com/)).
 *perf-cpp*  will define this counter, you only need to add it accordingly.
@@ -586,8 +589,6 @@ sampler.trigger({
     { perf::Sampler::Trigger{"mem-stores", perf::Precision::MustHaveZeroSkid} }         /// Other "real" counters.
   });
 ```
-
-The sampler will detect that auxiliary counter automatically.
 
 &rarr; [See code example](../examples/multi_event_sampling.cpp)
 
