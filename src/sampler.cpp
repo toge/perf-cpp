@@ -610,7 +610,7 @@ perf::Sampler::read_sample_event(perf::Sampler::UserLevelBufferEntry entry, cons
         kernel_registers.push_back(perf_kernel_registers[register_id]);
       }
 
-      sample.user_registers(std::move(kernel_registers));
+      sample.kernel_registers(std::move(kernel_registers));
     }
   }
 
