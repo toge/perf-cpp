@@ -1,14 +1,8 @@
 #include <algorithm>
 #include <perfcpp/sampler.h>
 #include <stdexcept>
-#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <utility>
-
-perf::Sampler::~Sampler()
-{
-  this->close();
-}
 
 perf::Sampler&
 perf::Sampler::trigger(std::vector<std::vector<std::string>>&& list_of_trigger_names)
@@ -67,93 +61,31 @@ void
 perf::Sampler::open()
 {
   /// Do not open again, if the sampler was already opened.
+  /// The is_open flag will be reset on closing the sampler.
   if (std::exchange(this->_is_opened, true)) {
     return;
   }
 
   /// Build the groups from triggers + counters from values.
-  for (const auto& trigger_group : this->_triggers) {
-    auto group = Group{};
-    auto counter_names = std::vector<std::string_view>{};
-
-    /// Add the trigger(s) to the group.
-    for (const auto trigger : trigger_group) {
-      if (auto counter_name_and_config = this->_counter_definitions.counter(std::get<0>(trigger));
-          counter_name_and_config.has_value()) {
-
-        /// Read the counter config (like event id, etc.).
-        auto counter_config = std::get<1>(counter_name_and_config.value());
-
-        /// Set the counters precise_ip (fall back to config if empty).
-        const auto precision = std::get<1>(trigger).value_or(this->_config.precise_ip());
-        counter_config.precise_ip(static_cast<std::uint8_t>(precision));
-
-        /// Set the counters period or frequency (fall back to config if empty).
-        const auto period_or_frequency = std::get<2>(trigger).value_or(this->_config.period_for_frequency());
-        std::visit(
-          [&counter_config](const auto period_or_frequency) {
-            using T = std::decay_t<decltype(period_or_frequency)>;
-            if constexpr (std::is_same_v<T, class Period>) {
-              counter_config.period(period_or_frequency.get());
-            } else if constexpr (std::is_same_v<T, class Frequency>) {
-              counter_config.frequency(period_or_frequency.get());
-            }
-          },
-          period_or_frequency);
-
-        /// Add the counter to the group.
-        group.add(counter_config);
-
-        /// Notice the counter name of the trigger event.
-        if (this->_values.is_set(PERF_SAMPLE_READ)) {
-          counter_names.push_back(std::get<0>(trigger));
-        }
-      }
-    }
-
-    if (!group.empty()) {
-      /// Add possible counters as value to the sample.
-      if (this->_values.is_set(PERF_SAMPLE_READ)) {
-
-        for (const auto& counter_name : this->_values.counters()) {
-
-          /// Verify the counter is not a metric.
-          if (this->_counter_definitions.is_metric(counter_name)) {
-            throw std::runtime_error{ std::string{ "Counter '" }
-                                        .append(counter_name)
-                                        .append("' seems to be a metric. Metrics are not supported for sampling.") };
-          }
-
-          /// Find the counter.
-          if (auto counter_config = this->_counter_definitions.counter(counter_name); counter_config.has_value()) {
-            /// Add the counter to the group and to the list of counters.
-            counter_names.push_back(std::get<0>(counter_config.value()));
-            group.add(std::get<1>(counter_config.value()));
-          } else {
-            throw std::runtime_error{ std::string{ "Cannot find counter '" }.append(counter_name).append("'.") };
-          }
-        }
-      }
-
-      if (!counter_names.empty()) {
-        this->_sample_counter.emplace_back(std::move(group), std::move(counter_names));
-      } else {
-        this->_sample_counter.emplace_back(std::move(group));
-      }
-    }
+  for (const auto& trigger : this->_triggers) {
+    /// Convert the trigger (event name, configuration attributes) into a "real" sample counter, which is basically a group of hardware events (one ore multiple triggers and to-recorded hardware events, if requested).
+    auto sample_counter = this->transform_trigger_to_sample_counter(trigger);
+    this->_sample_counter.push_back(std::move(sample_counter));
   }
 
-  /// Open the groups.
+  /// Verify that at least one trigger was configured.
   if (this->_sample_counter.empty()) {
     throw std::runtime_error{ "No trigger for sampling specified." };
   }
 
+  /// Open the trigger hardware events.
   for (auto& sample_counter : this->_sample_counter) {
     /// Detect, if the leader is an auxiliary (specifically for Sapphire Rapids).
     const auto is_leader_auxiliary_counter = sample_counter.group().member(0U).is_auxiliary();
 
     auto group_leader_file_descriptor = -1LL;
 
+    /// Open the conunters.
     for (auto counter_index = 0U; counter_index < sample_counter.group().size(); ++counter_index) {
       auto& counter = sample_counter.group().member(counter_index);
 
@@ -170,6 +102,7 @@ perf::Sampler::open()
       const auto is_include_cgroup = false;
 #endif
 
+      /// Open the hardware counter. If this fails, the counter.open() method fill throw an exception.
       counter.open(
         this->_config.is_debug(),
         is_leader,
@@ -200,27 +133,31 @@ perf::Sampler::open()
       }
     }
 
+    /// Get the file descriptor for opening the user-level buffer used for storing samples.
+    /// For the most times, this will be the group leader's file descriptor.
+    /// However, some architectures (e.g., Intel's Sapphire Rapids) need an "auxiliary" counter.
+    /// If this is the case, use the file descriptor of the second counter (the "real" counter) instead.
+    auto buffer_file_descriptor = group_leader_file_descriptor;
+    if (is_leader_auxiliary_counter && sample_counter.group().size() > 1U) {
+      buffer_file_descriptor = sample_counter.group().member(1U).file_descriptor();
+    }
+
     /// Open the mapped buffer.
-    /// If the leader is an "auxiliary" counter (like on Sapphire Rapid), use the second counter instead.
-    const auto file_descriptor = is_leader_auxiliary_counter && sample_counter.group().size() > 1U
-                                   ? sample_counter.group().member(1U).file_descriptor()
-                                   : group_leader_file_descriptor;
     auto* buffer = ::mmap(nullptr,
                           this->_config.buffer_pages() * 4096U,
                           PROT_READ,
                           MAP_SHARED,
-                          static_cast<std::int32_t>(file_descriptor),
+                          static_cast<std::int32_t>(buffer_file_descriptor),
                           0);
 
+    /// Verify the buffer was opened.
     if (buffer == MAP_FAILED) {
       throw std::runtime_error{ "Creating buffer via mmap() failed." };
-    }
-
-    if (buffer == nullptr) {
+    } else if (buffer == nullptr) {
       throw std::runtime_error{ "Created buffer via mmap() is null." };
     }
 
-    sample_counter.buffer(buffer);
+    sample_counter.buffer(buffer, this->_config.buffer_pages());
   }
 }
 
@@ -230,13 +167,9 @@ perf::Sampler::start()
   /// Open the groups.
   this->open();
 
-  /// Start the counters.
+  /// Enable the counters.
   for (const auto& sample_counter : this->_sample_counter) {
-    const auto group_leader_file_descriptor =
-      static_cast<std::int32_t>(sample_counter.group().leader_file_descriptor());
-
-    ::ioctl(group_leader_file_descriptor, PERF_EVENT_IOC_RESET, 0);
-    ::ioctl(group_leader_file_descriptor, PERF_EVENT_IOC_ENABLE, 0);
+    sample_counter.group().enable();
   }
 
   return true;
@@ -245,10 +178,9 @@ perf::Sampler::start()
 void
 perf::Sampler::stop()
 {
+  /// Disable the counters.
   for (const auto& sample_counter : this->_sample_counter) {
-    const auto group_leader_file_descriptor =
-      static_cast<std::int32_t>(sample_counter.group().leader_file_descriptor());
-    ::ioctl(group_leader_file_descriptor, PERF_EVENT_IOC_DISABLE, 0);
+    sample_counter.group().disable();
   }
 }
 
@@ -256,21 +188,85 @@ void
 perf::Sampler::close()
 {
   if (std::exchange(this->_is_opened, false)) {
-    /// Free all buffers and close all groups.
-    for (auto& sample_counter : this->_sample_counter) {
-      if (sample_counter.buffer()) {
-        ::munmap(sample_counter.buffer(), this->_config.buffer_pages() * 4096U);
-      }
-
-      if (sample_counter.group().leader_file_descriptor() > -1) {
-        sample_counter.group().close();
-      }
-    }
-
     /// Clear all buffers, groups, and counter names
     /// in order to enable opening again.
     this->_sample_counter.clear();
   }
+}
+
+perf::Sampler::SampleCounter
+perf::Sampler::transform_trigger_to_sample_counter(const std::vector<std::tuple<std::string_view, std::optional<Precision>, std::optional<PeriodOrFrequency>>>& triggers) const
+{
+  /// Group of hardware events.
+  auto group = Group{};
+
+  /// List of counter names that should be read later from results.
+  auto counter_names = std::vector<std::string_view>{};
+
+  /// Add the trigger(s) to the group. For the most time, this will be a single trigger. Some architectures need specific auxiliary counters.
+  for (const auto trigger : triggers) {
+    if (auto counter_name_and_config = this->_counter_definitions.counter(std::get<0>(trigger));
+        counter_name_and_config.has_value()) {
+
+      /// Read the counter config (like event id, etc.).
+      auto counter_config = std::get<1>(counter_name_and_config.value());
+
+      /// Set the counters precise_ip (fall back to config if empty).
+      const auto precision = std::get<1>(trigger).value_or(this->_config.precise_ip());
+      counter_config.precise_ip(static_cast<std::uint8_t>(precision));
+
+      /// Set the counters period or frequency (fall back to config if empty).
+      const auto period_or_frequency = std::get<2>(trigger).value_or(this->_config.period_for_frequency());
+      std::visit(
+        [&counter_config](const auto period_or_frequency) {
+          using T = std::decay_t<decltype(period_or_frequency)>;
+          if constexpr (std::is_same_v<T, class Period>) {
+            counter_config.period(period_or_frequency.get());
+          } else if constexpr (std::is_same_v<T, class Frequency>) {
+            counter_config.frequency(period_or_frequency.get());
+          }
+        },
+        period_or_frequency);
+
+      /// Add the counter to the group.
+      group.add(counter_config);
+
+      /// Notice the counter name of the trigger event.
+      if (this->_values.is_set(PERF_SAMPLE_READ)) {
+        counter_names.push_back(std::get<0>(trigger));
+      }
+    } else {
+      throw std::runtime_error{std::string{"Cannot find trigger '"}.append(std::get<0>(trigger)).append("'.")};
+    }
+  }
+
+  /// Add possible counters as value to the sample.
+  if (this->_values.is_set(PERF_SAMPLE_READ)) {
+    for (const auto& counter_name : this->_values.counters()) {
+
+      /// Verify the counter is not a metric.
+      if (this->_counter_definitions.is_metric(counter_name)) {
+        throw std::runtime_error{ std::string{ "Counter '" }
+                                    .append(counter_name)
+                                    .append("' seems to be a metric. Metrics are not supported for sampling.") };
+      }
+
+      /// Find the counter.
+      if (auto counter_config = this->_counter_definitions.counter(counter_name); counter_config.has_value()) {
+        /// Add the counter to the group and to the list of counters.
+        counter_names.push_back(std::get<0>(counter_config.value()));
+        group.add(std::get<1>(counter_config.value()));
+      } else {
+        throw std::runtime_error{ std::string{ "Cannot find counter '" }.append(counter_name).append("'.") };
+      }
+    }
+
+    if (!counter_names.empty()) {
+      return SampleCounter{std::move(group), std::move(counter_names)};
+    }
+  }
+
+  return SampleCounter{std::move(group)};
 }
 
 std::vector<perf::Sample>
@@ -646,6 +642,19 @@ perf::Sampler::read_throttle_event(perf::Sampler::UserLevelBufferEntry entry) co
   sample.throttle(Throttle{ entry.is_throttle() });
 
   return sample;
+}
+
+perf::Sampler::SampleCounter::~SampleCounter()
+{
+  /// Free the buffer (if mmap-ed).
+  if (this->_buffer != nullptr) {
+    ::munmap(this->_buffer, this->_buffer_pages * 4096U);
+  }
+
+  /// Close the group.
+  if (this->_group.leader_file_descriptor() > -1) {
+    this->_group.close();
+  }
 }
 
 std::vector<perf::Sample>

@@ -50,11 +50,29 @@ public:
   bool start();
 
   /**
+   * Enables the group to start monitoring.
+   */
+  void enable() const;
+
+  /**
    * Stops monitoring of all counters in the group.
    *
    * @return True, if the counters could be stopped.
    */
   bool stop();
+
+  /**
+   * Disables the group to stop monitoring.
+   */
+  void disable() const;
+
+  /**
+   * Reads the counter into the given value.
+   *
+   * @param value Value to read the counters into.
+   * @return True, if reading was successful.
+   */
+  [[nodiscard]] bool read(CounterReadFormat<MAX_MEMBERS>& value) const;
 
   /**
    * @return Number of counters in the group.

@@ -280,7 +280,7 @@ public:
   Sampler(Sampler&&) noexcept = default;
   Sampler(const Sampler&) = default;
 
-  ~Sampler();
+  ~Sampler() = default;
 
   /**
    * Set the trigger for sampling to a single counter.
@@ -462,7 +462,9 @@ private:
     {
     }
 
-    void buffer(void* buffer) noexcept { _buffer = buffer; }
+    ~SampleCounter();
+
+    void buffer(void* buffer, const std::uint64_t buffer_pages) noexcept { _buffer = buffer; _buffer_pages = buffer_pages; }
 
     [[nodiscard]] Group& group() noexcept { return _group; }
     [[nodiscard]] const Group& group() const noexcept { return _group; }
@@ -475,6 +477,9 @@ private:
 
     /// User-level, mmap-ed buffer that receives the samples by the perf subsystem.
     void* _buffer{ nullptr };
+
+    /// Number of pages allocated in the mmap-ed buffer.
+    std::uint64_t _buffer_pages{ 0U };
 
     /// List of counter names if counter values are sampled.
     std::vector<std::string_view> _counter_names;
@@ -590,6 +595,15 @@ private:
   };
 
   /**
+   * Transforms a list of trigger events into a single SampleCounter that includes a group of hardware events.
+   *
+   * @param triggers List of triggers to transform.
+   *
+   * @return Sample counter, consisting of a group of trigger event(s).
+   */
+  [[nodiscard]] SampleCounter transform_trigger_to_sample_counter(const std::vector<std::tuple<std::string_view, std::optional<Precision>, std::optional<PeriodOrFrequency>>>& triggers) const;
+
+  /**
    * Reads the sample_id struct from the data located at sample_ptr into the provided sample.
    *
    * @param sample Sample to read the data into.
@@ -634,7 +648,7 @@ private:
   [[nodiscard]] static perf::Sample read_cgroup_event(UserLevelBufferEntry entry);
 
   /**
-   * Translates the current entry from the user-level buffer into a throttle or unthrottle sample.
+   * Translates the current entry from the user-level buffer into a throttle or un-throttle sample.
    *
    * @param entry Entry of the user-level buffer.
    *

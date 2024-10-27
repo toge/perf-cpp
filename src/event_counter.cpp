@@ -159,11 +159,9 @@ perf::EventCounter::result(std::uint64_t normalization) const
     }
 
     /// If the event is a metric (not a hardware event), calculate the value of the metric and add it to the result.
-    else {
-      if (auto metric = this->_counter_definitions.metric(event.name()); metric.has_value()) {
-        if (const auto value = std::get<1>(metric.value()).calculate(hardware_events_result); value.has_value()) {
-          result.emplace_back(std::get<0>(metric.value()), value.value());
-        }
+    else if (auto metric = this->_counter_definitions.metric(event.name()); metric.has_value()) {
+      if (const auto value = std::get<1>(metric.value()).calculate(hardware_events_result); value.has_value()) {
+        result.emplace_back(std::get<0>(metric.value()), value.value());
       }
     }
   }
@@ -247,11 +245,9 @@ perf::MultiEventCounterBase::result(const std::vector<perf::EventCounter>& event
     }
 
     /// If the event is a metric (not a hardware event), calculate the value of the metric and add it to the result.
-    else {
-      if (auto metric = reference_event_counter._counter_definitions.metric(event.name()); metric.has_value()) {
-        if (auto value = std::get<1>(metric.value()).calculate(hardware_event_results); value.has_value()) {
-          result.emplace_back(std::get<0>(metric.value()), value.value());
-        }
+    else if (auto metric = reference_event_counter._counter_definitions.metric(event.name()); metric.has_value()) {
+      if (auto value = std::get<1>(metric.value()).calculate(hardware_event_results); value.has_value()) {
+        result.emplace_back(std::get<0>(metric.value()), value.value());
       }
     }
   }
