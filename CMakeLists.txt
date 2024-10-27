@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(libperf-cpp VERSION 0.7)
+project(libperf-cpp VERSION 0.8.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE RELEASE)

@@ -18,7 +18,7 @@
 ```
 git clone git clone https://github.com/jmuehlig/perf-cpp.git
 cd perf-cpp
-git checkout v0.7.1   # optional
+git checkout v0.8.0   # optional
 ```
 
 #### 2) Generate the Makefile and build
@@ -61,38 +61,37 @@ The example binaries can be found in `build/examples/bin`.
 You can choose one of the following approaches.
 
 ### CMake and ExternalProject
-* Add `include(ExternalProject)` to your `CMakeLists.txt`
+* Add `include(ExternalProject)` to your `CMakeLists.txt`.
 * Define an external project:
 ```
 ExternalProject_Add(
   perf-cpp-external
   GIT_REPOSITORY "https://github.com/jmuehlig/perf-cpp"
-  GIT_TAG "v0.7.1"
+  GIT_TAG "v0.8.0"
   PREFIX "lib/perf-cpp"
   INSTALL_COMMAND cmake -E echo ""
 )
 ```
-* Add `lib/perf-cpp/src/perf-cpp-external/include` to your `include_directories()`
-* Add `lib/perf-cpp/src/perf-cpp-external-build` to your `link_directories()`
+* Add `lib/perf-cpp/src/perf-cpp-external/include` to your `include_directories()`.
+* Add `lib/perf-cpp/src/perf-cpp-external-build` to your `link_directories()`.
 
 Note that **lib/** can be replaced by any folder you want to store the library in.
   
 
 ### CMake and FetchContent
-* Add `include(FetchContent)` to your `CMakeLists.txt`
+* Add `include(FetchContent)` to your `CMakeLists.txt`.
 * Define an external project:
 ```
 include(FetchContent)
 FetchContent_Declare(
   perf-cpp-external
   GIT_REPOSITORY "https://github.com/jmuehlig/perf-cpp"
-  GIT_TAG "v0.7.1"
+  GIT_TAG "v0.8.0"
 )
 FetchContent_MakeAvailable(perf-cpp-external)
 ```
-* Add `-DBUILD_SHARED_LIBS=ON` if you want to build a shared library instead of static
-* Add `perf-cpp` to your linked libraries
-* Add `${perf-cpp-external_SOURCE_DIR}/include/` to your include directories
+* Add `perf-cpp` to your linked libraries.
+* Add `${perf-cpp-external_SOURCE_DIR}/include/` to your include directories.
 
 ### CMake and find_package
 
