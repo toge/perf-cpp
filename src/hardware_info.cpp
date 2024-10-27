@@ -33,6 +33,40 @@ perf::HardwareInfo::intel_pebs_mem_stores_event_id()
   return std::nullopt;
 }
 
+std::optional<std::uint32_t>
+perf::HardwareInfo::amd_ibs_op_type()
+{
+  if (HardwareInfo::is_amd_ibs_supported()) {
+    return HardwareInfo::parse_type_from_file("/sys/bus/event_source/devices/ibs_op/type");
+  }
+
+  return std::nullopt;
+}
+
+std::optional<std::uint32_t>
+perf::HardwareInfo::amd_ibs_fetch_type()
+{
+  if (HardwareInfo::is_amd_ibs_supported()) {
+    return HardwareInfo::parse_type_from_file("/sys/bus/event_source/devices/ibs_fetch/type");
+  }
+
+  return std::nullopt;
+}
+
+std::optional<std::uint32_t>
+perf::HardwareInfo::parse_type_from_file(std::string&& path)
+{
+  auto type_stream = std::ifstream{ path };
+  if (type_stream.is_open()) {
+    std::uint32_t type;
+    type_stream >> type;
+
+    return type;
+  }
+
+  return std::nullopt;
+}
+
 std::optional<std::uint64_t>
 perf::HardwareInfo::parse_event_umask_from_file(std::string&& path)
 {
@@ -47,7 +81,7 @@ perf::HardwareInfo::parse_event_umask_from_file(std::string&& path)
       auto event = std::optional<std::string>{ std::nullopt };
       auto umask = std::optional<std::string>{ std::nullopt };
 
-      auto token_stream = std::stringstream{line};
+      auto token_stream = std::stringstream{ line };
       std::string token;
 
       /// Process every token where tokens are separated by ','.
@@ -85,38 +119,6 @@ perf::HardwareInfo::parse_event_umask_from_file(std::string&& path)
       if (event.has_value() && umask.has_value()) {
         return std::stoull(/* combine <umask><event> */ umask.value().append(event.value()), nullptr, 16);
       }
-    }
-  }
-
-  return std::nullopt;
-}
-
-std::optional<std::uint32_t>
-perf::HardwareInfo::amd_ibs_op_type()
-{
-  if (perf::HardwareInfo::is_amd_ibs_supported()) {
-    auto ibs_op_stream = std::ifstream{ "/sys/bus/event_source/devices/ibs_op/type" };
-    if (ibs_op_stream.is_open()) {
-      std::uint32_t type;
-      ibs_op_stream >> type;
-
-      return type;
-    }
-  }
-
-  return std::nullopt;
-}
-
-std::optional<std::uint32_t>
-perf::HardwareInfo::amd_ibs_fetch_type()
-{
-  if (perf::HardwareInfo::is_amd_ibs_supported()) {
-    auto ibs_op_stream = std::ifstream{ "/sys/bus/event_source/devices/ibs_fetch/type" };
-    if (ibs_op_stream.is_open()) {
-      std::uint32_t type;
-      ibs_op_stream >> type;
-
-      return type;
     }
   }
 

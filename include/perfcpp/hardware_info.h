@@ -102,6 +102,14 @@ public:
 
 private:
   /**
+   * Tries to read the type from the provided file.
+   *
+   * @param path Path to the file.
+   * @return Integer representation of type.
+   */
+  [[nodiscard]] static std::optional<std::uint32_t> parse_type_from_file(std::string&& path);
+
+  /**
    * Tries to read event and umask from the provided file.
    *
    * @param path Path to the file.
