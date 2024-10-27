@@ -13,12 +13,12 @@ namespace perf {
 class CounterDefinition
 {
 public:
+  CounterDefinition();
   explicit CounterDefinition(const std::string& config_file);
   explicit CounterDefinition(std::string&& config_file)
     : CounterDefinition(config_file)
   {
   }
-  CounterDefinition();
 
   CounterDefinition(CounterDefinition&&) noexcept = default;
   CounterDefinition& operator=(CounterDefinition&&) noexcept = default;

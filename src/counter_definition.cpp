@@ -6,20 +6,16 @@
 #include <string_view>
 #include <utility>
 
-perf::CounterDefinition::CounterDefinition(const std::string& config_file)
-{
-  this->initialize_generalized_counters();
-  this->initialize_amd_ibs_counters();
-  this->initialize_intel_pebs_counters();
-
-  this->read_counter_configuration(config_file);
-}
-
 perf::CounterDefinition::CounterDefinition()
 {
   this->initialize_generalized_counters();
   this->initialize_amd_ibs_counters();
   this->initialize_intel_pebs_counters();
+}
+
+perf::CounterDefinition::CounterDefinition(const std::string& config_file) : CounterDefinition()
+{
+  this->read_counter_configuration(config_file);
 }
 
 std::optional<std::pair<std::string_view, perf::CounterConfig>>
@@ -189,25 +185,41 @@ perf::CounterDefinition::read_counter_configuration(const std::string& csv_filen
       std::uint64_t config;
       auto extended_config = 0ULL;
       auto type = std::uint32_t{ PERF_TYPE_RAW };
-      if (std::getline(line_stream, name, ',')) {
+
+      /// Read name.
+      if (std::getline(line_stream, name, ','); !name.empty()) {
+
+        /// Read config-field and translate into integer.
         std::string config_str;
         if (std::getline(line_stream, config_str, ',')) {
-          config = std::stoull(config_str, nullptr, 0);
+          if (config_str.rfind("0x", 0ULL) == 0ULL) {
+            config = std::stoull(config_str.substr(2ULL), nullptr, 16);
+          } else {
+            config = std::stoull(config_str, nullptr, 0);
+          }
 
+          /// Read extended config-field and translate into integer.
           std::string extended_config_str;
           if (std::getline(line_stream, extended_config_str, ',')) {
-            extended_config = std::stoull(extended_config_str, nullptr, 0);
+            if (extended_config_str.rfind("0x", 0ULL) == 0ULL) {
+              extended_config = std::stoull(extended_config_str.substr(2ULL), nullptr, 16);
+            } else {
+              extended_config = std::stoull(extended_config_str, nullptr, 0);
+            }
 
+            /// Read type-field and translate into integer.
             std::string type_str;
             if (std::getline(line_stream, type_str, ',')) {
-              type = std::stoul(type_str, nullptr, 0);
+              if (type_str.rfind("0x", 0ULL) == 0ULL) {
+                type = std::stoull(type_str.substr(2ULL), nullptr, 16);
+              } else {
+                type = std::stoull(extended_config_str, nullptr, 0);
+              }
             }
           }
 
-          if (!name.empty()) {
-            this->_counter_configs.insert(
-              std::make_pair(std::move(name), CounterConfig{ type, config, extended_config }));
-          }
+          /// Add counter configuration.
+          this->add(std::move(name), CounterConfig{ type, config, extended_config });
         }
       }
     }
